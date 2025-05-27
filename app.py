@@ -4,329 +4,426 @@ import os
 import asyncio
 from dotenv import load_dotenv
 import google.generativeai as genai
-from agents.agent_clarity import run_clarity_agent
-from agents.agent_proof import run_proof_agent
 import logging
 import plotly.graph_objects as go
+from agents import run_clarity_agent, run_proof_agent
 
 # Load environment variables
 load_dotenv()
 
-# Configure Streamlit page
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Page config
 st.set_page_config(
-    page_title="RealityPatch - AI-Powered Fact Checking",
-    page_icon="🔍",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="RealityPatch Terminal",
+    page_icon="🕵️‍♂️",
+    layout="wide"
 )
 
-# Custom CSS
+# Custom CSS for terminal theme
 st.markdown("""
 <style>
-    .agent-card {
-        padding: 1rem;
-        border-radius: 0.5rem;
+    /* Main theme colors */
+    :root {
+        --primary-color: #00ffcc;
+        --bg-color: #0f0f0f;
+        --secondary-bg: #1a1a1a;
+        --text-color: #00ffcc;
+        --text-secondary: #00ffff;
+    }
+    
+    /* Global styles */
+    .stApp {
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        font-family: 'Courier New', monospace;
+    }
+    
+    /* Headers */
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--text-color) !important;
+        font-weight: 600 !important;
+        margin-bottom: 1rem !important;
+        letter-spacing: 1px;
+    }
+    
+    /* Cards and containers */
+    .stCard {
+        background-color: var(--secondary-bg);
+        border-radius: 8px;
+        padding: 1.5rem;
         margin-bottom: 1rem;
-        background-color: rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--primary-color);
+        box-shadow: 0 4px 6px rgba(0, 255, 204, 0.1);
     }
-    .verdict-badge {
+    
+    /* Buttons */
+    .stButton>button {
+        background-color: var(--primary-color);
+        color: var(--bg-color);
+        border: none;
+        border-radius: 8px;
         padding: 0.5rem 1rem;
-        border-radius: 0.5rem;
         font-weight: bold;
-        text-align: center;
+        transition: all 0.3s ease;
     }
-    .verdict-verified {
-        background-color: #28a745;
+    
+    .stButton>button:hover {
+        background-color: #00ffaa;
+        transform: translateY(-1px);
+    }
+    
+    /* Input fields */
+    .stTextInput>div>div>input,
+    .stTextArea>div>div>textarea {
+        background-color: var(--secondary-bg);
+        color: var(--text-color);
+        border: 1px solid var(--primary-color);
+        border-radius: 8px;
+        padding: 0.5rem;
+        font-family: 'Courier New', monospace;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2rem;
+        border-bottom: 1px solid var(--primary-color);
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: var(--secondary-bg);
+        border-radius: 8px 8px 0 0;
+        gap: 1rem;
+        padding: 10px 20px;
+        color: var(--text-color);
+        font-weight: bold;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: var(--primary-color);
+        color: var(--bg-color);
+    }
+    
+    /* Loading animation */
+    .stSpinner>div {
+        border-color: var(--primary-color);
+    }
+    
+    /* Evidence cards */
+    .evidence-card {
+        background-color: var(--secondary-bg);
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border: 1px dashed var(--primary-color);
+    }
+    
+    .evidence-card:hover {
+        border-style: solid;
+    }
+    
+    /* Status badges */
+    .status-badge {
+        display: inline-block;
+        padding: 0.6em 1.2em;
+        border-radius: 8px;
+        font-size: 1.2em;
+        font-weight: bold;
         color: white;
     }
-    .verdict-unverified {
-        background-color: #dc3545;
-        color: white;
+    
+    .status-verified {
+        background-color: #00b894;
     }
-    .verdict-unknown {
-        background-color: #6c757d;
-        color: white;
+    
+    .status-partial {
+        background-color: #fdcb6e;
+        color: black;
     }
-    .confidence-bar {
-        height: 1.5rem;
-        border-radius: 0.25rem;
-        background-color: #e9ecef;
+    
+    .status-unclear {
+        background-color: #636e72;
     }
-    .confidence-fill {
-        height: 100%;
-        border-radius: 0.25rem;
-        background-color: #007bff;
+    
+    /* Links */
+    a {
+        color: var(--primary-color);
+        text-decoration: none;
+    }
+    
+    a:hover {
+        text-decoration: underline;
+    }
+    
+    /* Title */
+    .title {
+        font-size: 2.8em;
+        font-weight: bold;
+        color: var(--primary-color);
+        margin-bottom: 0.2em;
+        letter-spacing: 1px;
+    }
+    
+    /* Section titles */
+    .section-title {
+        font-size: 1.5em;
+        font-weight: 600;
+        margin-top: 2em;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--primary-color);
+        padding-bottom: 4px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Initialize session state
-if 'clarity_results' not in st.session_state:
-    st.session_state.clarity_results = None
-if 'proof_results' not in st.session_state:
-    st.session_state.proof_results = None
-
-# Agent definitions
-AGENTS = {
-    "Factra": {
-        "emoji": "🧾",
-        "role": "Claim Analyzer",
-        "description": "The final evaluator that synthesizes all agent outputs to decide truth."
-    },
-    "LogiX": {
-        "emoji": "📡",
-        "role": "Proof Agent",
-        "description": "A data-focused agent searching for real-time evidence from APIs."
-    },
-    "Veritas": {
-        "emoji": "🧠",
-        "role": "Context Analyst",
-        "description": "A logical scholar checking context and argumentative consistency."
-    },
-    "Spectra": {
-        "emoji": "👁️",
-        "role": "Media Scanner",
-        "description": "A sleek visual forensics expert that scans media for deepfakes."
-    }
-}
+if 'analysis_results' not in st.session_state:
+    st.session_state.analysis_results = None
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
 def init_gemini():
     """Initialize Gemini API"""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        st.error("GEMINI_API_KEY not found in environment variables")
+        st.error("Please set GEMINI_API_KEY in your .env file")
         return None
-    
     genai.configure(api_key=api_key)
     return genai.GenerativeModel('models/gemini-1.5-flash-latest')
 
-async def analyze_claims(clarity_results, search_api_key):
-    """Analyze claims asynchronously"""
-    proof_results = []
-    for claim in clarity_results:
-        try:
-            # Convert claim dictionary to string format
-            claim_text = f"{claim.get('subject', '')} {claim.get('predicate', '')} {claim.get('object', '')}".strip()
-            if not claim_text:
-                continue
-                
-            proof = await run_proof_agent(claim_text, search_api_key)
-            if proof and 'results' in proof:  # Check if we got valid results
-                # Get the first result since we're processing one claim at a time
-                result = proof['results'][0] if proof['results'] else {
-                    "status": "Not Verified",
-                    "confidence": 0.0,
-                    "evidence": []
-                }
-                proof_results.append(result)
-            else:
-                proof_results.append({
-                    "status": "Error",
-                    "confidence": 0.0,
-                    "evidence": [],
-                    "error": "No results returned"
-                })
-        except Exception as e:
-            st.error(f"Error analyzing claim: {str(e)}")
-            proof_results.append({
-                "status": "Error",
-                "confidence": 0.0,
-                "evidence": [],
-                "error": str(e)
-            })
-    return proof_results
+async def analyze_claim(claim: str):
+    """Analyze a claim using both agents"""
+    try:
+        # Run clarity agent
+        clarity_result = await run_clarity_agent(claim)
+        
+        # Run proof agent
+        proof_result = await run_proof_agent(claim, os.getenv("SERPER_API_KEY"))
+        
+        return {
+            "clarity": clarity_result,
+            "proof": proof_result
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing claim: {str(e)}")
+        return None
 
-def format_claim(claim):
-    """Format a single claim for display"""
-    if isinstance(claim, str):
-        try:
-            claim = json.loads(claim)
-        except json.JSONDecodeError:
-            return f"Invalid claim format: {claim}"
+def create_confidence_gauge(confidence: float):
+    """Create a confidence gauge using Plotly"""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=confidence * 100,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        gauge={
+            'axis': {'range': [0, 100]},
+            'bar': {'color': "#00ffcc"},
+            'steps': [
+                {'range': [0, 33], 'color': "#636e72"},
+                {'range': [33, 66], 'color': "#fdcb6e"},
+                {'range': [66, 100], 'color': "#00b894"}
+            ],
+            'threshold': {
+                'line': {'color': "white", 'width': 4},
+                'thickness': 0.75,
+                'value': confidence * 100
+            }
+        },
+        title={'text': "Confidence Level", 'font': {'color': "#00ffcc"}}
+    ))
     
-    if not isinstance(claim, dict):
-        return f"Invalid claim format: {claim}"
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={'color': "#00ffcc"},
+        height=200
+    )
     
-    return f"""
-    **Subject:** {claim.get('subject', 'N/A')}  
-    **Action:** {claim.get('predicate', 'N/A')}  
-    **Object:** {claim.get('object', 'N/A')}  
-    **Quantifier:** {claim.get('quantifier', 'N/A')}  
-    **Time:** {claim.get('time_reference', 'N/A')}  
-    **Location:** {claim.get('location', 'N/A')}  
-    **Source:** {claim.get('source', 'N/A')}  
-    **Confidence:** {claim.get('confidence', 0.0):.2f}
-    """
+    return fig
 
-def format_proof(proof):
-    """Format proof results for display"""
-    if isinstance(proof, str):
-        try:
-            proof = json.loads(proof)
-        except json.JSONDecodeError:
-            return f"Invalid proof format: {proof}"
+def display_claim_components(components):
+    """Display claim components in a structured way"""
+    st.markdown("<div class='section-title'>Claim Components</div>", unsafe_allow_html=True)
     
-    if not isinstance(proof, dict):
-        return f"Invalid proof format: {proof}"
-    
-    # Format evidence snippets
-    evidence_text = []
-    for evidence in proof.get('evidence', []):
-        evidence_text.append(f"- {evidence.get('title', 'No title')}: {evidence.get('snippet', 'No snippet')}")
-    
-    return f"""
-    **Status:** {proof.get('status', 'N/A')}  
-    **Confidence:** {proof.get('confidence', 0.0):.2f}  
-    **Evidence:**  
-    {chr(10).join(evidence_text) if evidence_text else 'None'}
-    """
-
-def display_verdict_badge(status):
-    """Display a color-coded verdict badge"""
-    if status == "Verified":
-        return f'<div class="verdict-badge verdict-verified">✅ {status}</div>'
-    elif status == "Not Verified":
-        return f'<div class="verdict-badge verdict-unverified">❌ {status}</div>'
-    else:
-        return f'<div class="verdict-badge verdict-unknown">❔ {status}</div>'
-
-def display_confidence_bar(confidence):
-    """Display a confidence score as a progress bar"""
-    return f"""
-    <div class="confidence-bar">
-        <div class="confidence-fill" style="width: {confidence * 100}%"></div>
-    </div>
-    <div style="text-align: right; font-size: 0.8rem;">{confidence:.2f}</div>
-    """
+    for component in components:
+        with st.container():
+            st.markdown(f"""
+            <div class="evidence-card">
+                <h4>{component['type']}</h4>
+                <p>{component['text']}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
 def main():
-    # Sidebar
-    with st.sidebar:
-        st.title("🤖 RealityPatch Agents")
-        for name, info in AGENTS.items():
-            with st.container():
-                st.markdown(f"### {info['emoji']} {name}")
-                st.markdown(f"**{info['role']}**")
-                st.markdown(info['description'])
-                st.markdown("---")
-        
-        # Theme toggle
-        st.markdown("### 🎨 Theme")
-        st.toggle("Dark Mode", value=False)
-    
-    # Main content
-    st.title("🔍 RealityPatch Fact Checker")
-    
-    # Initialize Gemini
-    model = init_gemini()
-    if not model:
-        return
+    """Main application function"""
+    st.markdown("<div class='title'>🕵️ RealityPatch Terminal</div>", unsafe_allow_html=True)
+    st.caption("A fun, slightly illegal-looking interface for AI-powered claim verification")
     
     # Create tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Overview", "📑 Detailed Report", "🧬 Meet the Agents"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Home", "Clarity Agent", "Proof Agent", "Results & Summary"])
     
     with tab1:
-        # Example claims
-        st.markdown("### Example Claims")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("🌍 Earth is Flat"):
-                st.session_state.text_input = "Is the earth flat?"
-        with col2:
-            if st.button("🌙 Moon Landing"):
-                st.session_state.text_input = "The moon landing was faked"
-        with col3:
-            if st.button("🇮🇳 India Ceasefire"):
-                st.session_state.text_input = "India broke the ceasefire"
-        
-        # Text input
-        text_input = st.text_area(
-            "Enter your claim to analyze:",
-            value=getattr(st.session_state, 'text_input', ''),
-            height=150,
-            help="Enter a claim or statement to fact-check"
-        )
-        
-        # Analysis button
-        if st.button("🔍 Analyze Claim", type="primary"):
-            if not text_input:
-                st.warning("Please enter a claim to analyze")
-                return
+        st.markdown("""
+        <div class="stCard">
+            <h2>Welcome to RealityPatch Terminal</h2>
+            <p>RealityPatch is an AI-powered fact-checking tool that helps you verify claims and statements. 
+            Our system uses multiple AI agents to analyze claims for clarity and provide evidence-based verification.</p>
             
-            with st.spinner("🤖 Agents are analyzing your claim..."):
-                try:
-                    # Run clarity analysis
-                    clarity_results = run_clarity_agent(text_input, model)
-                    if not clarity_results:
-                        st.warning("No claims could be extracted. Please try rephrasing your input.")
-                        return
-                    st.session_state.clarity_results = clarity_results
-                    
-                    # Run proof analysis
-                    search_api_key = os.getenv("SEARCH_API_KEY", "placeholder_key")
-                    proof_results = asyncio.run(analyze_claims(clarity_results, search_api_key))
-                    
-                    if not proof_results:
-                        st.warning("Could not verify any claims. Please check your search API configuration.")
-                        return
-                    
-                    st.session_state.proof_results = proof_results
-                    
-                except Exception as e:
-                    st.error(f"Error during analysis: {str(e)}")
-                    return
-        
-        # Display results if available
-        if st.session_state.clarity_results is not None:
-            st.markdown("### 📊 Analysis Results")
+            <h3>How it works:</h3>
+            <ol>
+                <li>Enter your claim in the Clarity Agent tab</li>
+                <li>Our AI will analyze the claim for clarity and structure</li>
+                <li>The Proof Agent will search for evidence and verify the claim</li>
+                <li>View detailed results and evidence in the Results tab</li>
+            </ol>
             
-            # Overall verdict
-            if st.session_state.proof_results:
-                latest_result = st.session_state.proof_results[-1]
-                st.markdown("### Overall Verdict")
-                st.markdown(display_verdict_badge(latest_result.get('status', 'Unknown')), unsafe_allow_html=True)
-                
-                # Confidence scores
-                st.markdown("### Confidence Scores")
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.markdown("#### Factra 🧾")
-                    st.markdown(display_confidence_bar(latest_result.get('confidence', 0.0)), unsafe_allow_html=True)
-                
-                with col2:
-                    st.markdown("#### LogiX 📡")
-                    st.markdown(display_confidence_bar(latest_result.get('confidence', 0.0)), unsafe_allow_html=True)
-                
-                with col3:
-                    st.markdown("#### Veritas 🧠")
-                    st.markdown(display_confidence_bar(0.8), unsafe_allow_html=True)  # Placeholder
+            <h3>Features:</h3>
+            <ul>
+                <li>🔍 Claim analysis and verification</li>
+                <li>📊 Confidence scoring</li>
+                <li>🔗 Evidence linking</li>
+                <li>📝 Detailed explanations</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
     
     with tab2:
-        if st.session_state.clarity_results is not None:
-            for i, (claim, proof) in enumerate(zip(st.session_state.clarity_results, st.session_state.proof_results)):
-                with st.expander(f"Claim {i+1}"):
-                    # Factra's Analysis
-                    st.markdown(f"### 🧾 Factra's Claim Analysis")
-                    st.markdown(format_claim(claim))
-                    
-                    # LogiX's Verification
-                    st.markdown(f"### 📡 LogiX's Verification")
-                    st.markdown(format_proof(proof))
-                    
-                    # Veritas's Context Analysis
-                    st.markdown(f"### 🧠 Veritas's Context Analysis")
-                    st.markdown("Context analysis coming soon...")
+        st.markdown("<div class='section-title'>Clarity Agent</div>", unsafe_allow_html=True)
+        st.markdown("Enter a claim to analyze its clarity and structure.")
+        
+        claim = st.text_area("Enter your claim:", height=100, key="clarity_claim_input", placeholder="e.g., The moon landing was faked in 1969.")
+        
+        if st.button("Analyze Clarity", key="clarity_analyze_btn"):
+            if claim:
+                with st.spinner("Analyzing claim clarity..."):
+                    result = asyncio.run(run_clarity_agent(claim))
+                    if result:
+                        st.session_state.analysis_results = {"clarity": result}
+                        st.success("Analysis complete!")
+                        
+                        # Display components
+                        if "components" in result:
+                            display_claim_components(result["components"])
+                        
+                        # Display clarity score
+                        if "clarity_score" in result:
+                            st.markdown(f"### Clarity Score: {result['clarity_score']:.2f}")
+                            st.progress(result['clarity_score'])
+            else:
+                st.warning("Please enter a claim to analyze.")
     
     with tab3:
-        st.markdown("### 🤖 Meet the RealityPatch Agents")
+        st.markdown("<div class='section-title'>Proof Agent</div>", unsafe_allow_html=True)
+        st.markdown("Verify your claim with evidence and analysis.")
         
-        for name, info in AGENTS.items():
-            with st.container():
-                st.markdown(f"### {info['emoji']} {name}")
-                st.markdown(f"**Role:** {info['role']}")
-                st.markdown(info['description'])
-                st.markdown("---")
+        if st.session_state.analysis_results and "clarity" in st.session_state.analysis_results:
+            claim = st.session_state.analysis_results["clarity"].get("original_claim", "")
+        else:
+            claim = st.text_area("Enter your claim:", height=100, key="proof_claim_input", placeholder="e.g., The moon landing was faked in 1969.")
+        
+        if st.button("Verify Claim", key="proof_verify_btn"):
+            if claim:
+                with st.spinner("Verifying claim..."):
+                    result = asyncio.run(run_proof_agent(claim, os.getenv("SERPER_API_KEY")))
+                    if result:
+                        if st.session_state.analysis_results:
+                            st.session_state.analysis_results["proof"] = result
+                        else:
+                            st.session_state.analysis_results = {"proof": result}
+                        st.success("Verification complete!")
+                        
+                        # Display confidence gauge
+                        st.plotly_chart(create_confidence_gauge(result["confidence"]))
+                        
+                        # Display verdict
+                        st.markdown(f"""
+                        <div class="stCard">
+                            <h3>Verdict: {result['verdict']}</h3>
+                            <p>{result['explanation']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Display evidence
+                        if result["evidence"]:
+                            st.markdown("<div class='section-title'>Evidence</div>", unsafe_allow_html=True)
+                            for evidence in result["evidence"]:
+                                st.markdown(f"""
+                                <div class="evidence-card">
+                                    <h4>{evidence['title']}</h4>
+                                    <p>{evidence['snippet']}</p>
+                                    <small>Source: {evidence['source']}</small>
+                                </div>
+                                """, unsafe_allow_html=True)
+            else:
+                st.warning("Please enter a claim to verify.")
+    
+    with tab4:
+        st.markdown("<div class='section-title'>Results & Summary</div>", unsafe_allow_html=True)
+        
+        if st.session_state.analysis_results:
+            clarity_result = st.session_state.analysis_results.get("clarity")
+            proof_result = st.session_state.analysis_results.get("proof")
+            
+            if clarity_result and proof_result:
+                # Display summary
+                st.markdown("""
+                <div class="stCard">
+                    <h2>Analysis Summary</h2>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Clarity results
+                st.markdown("<div class='section-title'>Clarity Analysis</div>", unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class="evidence-card">
+                    <h4>Original Claim</h4>
+                    <p>{clarity_result['original_claim']}</p>
+                    <h4>Clarity Score</h4>
+                    <p>{clarity_result['clarity_score']:.2f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Proof results
+                st.markdown("<div class='section-title'>Verification Results</div>", unsafe_allow_html=True)
+                st.plotly_chart(create_confidence_gauge(proof_result["confidence"]))
+                
+                st.markdown(f"""
+                <div class="evidence-card">
+                    <h4>Verdict</h4>
+                    <p>{proof_result['verdict']}</p>
+                    <h4>Explanation</h4>
+                    <p>{proof_result['explanation']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Add to history
+                st.session_state.history.append({
+                    "claim": clarity_result['original_claim'],
+                    "clarity_score": clarity_result['clarity_score'],
+                    "verdict": proof_result['verdict'],
+                    "confidence": proof_result['confidence'],
+                    "timestamp": proof_result['timestamp']
+                })
+                
+                # Display history
+                if st.session_state.history:
+                    st.markdown("<div class='section-title'>Analysis History</div>", unsafe_allow_html=True)
+                    for item in reversed(st.session_state.history):
+                        st.markdown(f"""
+                        <div class="evidence-card">
+                            <h4>{item['claim']}</h4>
+                            <p>Verdict: {item['verdict']}</p>
+                            <p>Confidence: {item['confidence']:.2%}</p>
+                            <small>Analyzed: {item['timestamp']}</small>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("Please analyze a claim first using the Clarity and Proof agents.")
+        else:
+            st.info("No analysis results available. Please use the Clarity and Proof agents to analyze a claim.")
 
 if __name__ == "__main__":
     main() 

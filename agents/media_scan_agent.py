@@ -78,7 +78,8 @@ class MediaScanAgent:
                 "ai_analysis": ai_analysis,
                 "verdict": self._determine_verdict(ai_analysis),
                 "confidence_score": ai_analysis.get("confidence", 0.0),
-                "reasoning": ai_analysis.get("reasoning", "")
+                "reasoning": ai_analysis.get("reasoning", ""),
+                "explanation": ai_analysis.get("reasoning", "")
             }
             
             return result

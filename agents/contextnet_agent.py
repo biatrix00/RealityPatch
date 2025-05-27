@@ -90,7 +90,12 @@ class ContextNetAgent:
                     "background": analysis.get("confidence_background", 0.0),
                     "bias": analysis.get("confidence_bias", 0.0),
                     "keywords": analysis.get("confidence_keywords", 0.0)
-                }
+                },
+                "explanation": (
+                    f"Bias assessment is based on analysis of related articles and identified entities. "
+                    f"Confidence ({analysis.get('confidence_bias', 0.0):.2f}) reflects the clarity and agreement among sources. "
+                    f"Background and controversial aspects are summarized from the most relevant content."
+                )
             }
             
             return result
